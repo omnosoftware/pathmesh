@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>PathMesh</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      color: white;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    .overlay {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
+      max-width: 400px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 10;
+    }
+
+    .status {
+      text-align: center;
+      font-size: 14px;
+      opacity: 0.8;
+    }
+
+    button {
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      background: #f97316;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:active {
+      transform: scale(0.97);
+    }
+  </style>
+</head>
+<body>
+
+<div class="overlay">
+  <div class="status" id="status">Aguardando GPS...</div>
+  <button id="finishBtn">Finalizar Caminhada</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+
+<script>
+let scene, camera, renderer;
+let player;
+let pathPoints = [];
+let line;
+let origin = null;
+let statusEl = document.getElementById("status");
+
+initScene();
+startGPS();
+animate();
+
+function initScene() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0f172a);
+
+  camera = new THREE.PerspectiveCamera(
+    60,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    10000
+  );
+
+  camera.position.set(0, 150, 200);
+  camera.lookAt(0, 0, 0);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Luz
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.position.set(100, 200, 100);
+  scene.add(light);
+
+  // Plano
+  const planeGeometry = new THREE.PlaneGeometry(2000, 2000);
+  const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+  const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+  plane.rotation.x = -Math.PI / 2;
+  scene.add(plane);
+
+  // Player
+  const playerGeometry = new THREE.BoxGeometry(5, 5, 5);
+  const playerMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
+  player = new THREE.Mesh(playerGeometry, playerMaterial);
+  player.position.y = 2.5;
+  scene.add(player);
+
+  window.addEventListener("resize", onResize);
+}
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function startGPS() {
+  if (!navigator.geolocation) {
+    statusEl.innerText = "Geolocalização não suportada.";
+    return;
+  }
+
+  navigator.geolocation.watchPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+
+      if (!origin) {
+        origin = { lat, lng };
+        statusEl.innerText = "GPS conectado. Caminhando...";
+      }
+
+      const scale = 111139; // metros por grau aproximado
+
+      const dx = (lng - origin.lng) * scale;
+      const dz = (lat - origin.lat) * scale;
+
+      updatePlayer(dx, dz);
+    },
+    (err) => {
+      statusEl.innerText = "Erro ao obter GPS.";
+    },
+    { enableHighAccuracy: true, maximumAge: 0 }
+  );
+}
+
+function updatePlayer(x, z) {
+  const newPosition = new THREE.Vector3(x, 2.5, z);
+
+  if (pathPoints.length > 0) {
+    const last = pathPoints[pathPoints.length - 1];
+    if (last.distanceTo(newPosition) < 1) return; // ignora jitter
+  }
+
+  player.position.set(x, 2.5, z);
+  pathPoints.push(newPosition.clone());
+
+  updateTrail();
+}
+
+function updateTrail() {
+  if (line) {
+    scene.remove(line);
+  }
+
+  const geometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+  const material = new THREE.LineBasicMaterial({ color: 0xf97316 });
+  line = new THREE.Line(geometry, material);
+
+  scene.add(line);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+
+document.getElementById("finishBtn").addEventListener("click", () => {
+  const image = renderer.domElement.toDataURL("image/png");
+  const link = document.createElement("a");
+  link.href = image;
+  link.download = "pathmesh-trilha.png";
+  link.click();
+});
+</script>
+
+</body>
+</html>
