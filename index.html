@@ -285,6 +285,20 @@ function updateMiniMap(){
   ctx.arc(canvas.width/2,canvas.height/2,4,0,Math.PI*2);
   ctx.fill();
 }
+
+document.getElementById("finishBtn").addEventListener("click", () => {
+
+  // força último render
+  renderer.render(scene, camera);
+
+  const image = renderer.domElement.toDataURL("image/png");
+
+  const link = document.createElement("a");
+  link.href = image;
+  link.download = "pathmesh-trilha.png";
+  link.click();
+
+});
 </script>
 
 </body>
