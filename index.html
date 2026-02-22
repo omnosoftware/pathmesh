@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <title>PathMesh</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
   <style>
     * {
       margin: 0;
@@ -59,142 +61,193 @@
     }
   </style>
 </head>
+
 <body>
 
-<div class="overlay">
-  <div class="status" id="status">Aguardando GPS...</div>
-  <button id="finishBtn">Finalizar Caminhada</button>
-</div>
+  <div class="overlay">
+    <div class="status" id="status">Aguardando GPS...</div>
+    <button id="finishBtn">Finalizar Caminhada</button>
+  </div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <!-- THREE CORE -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <!-- CONTROLES TOUCH -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
 
-<script>
-let scene, camera, renderer;
-let player;
-let pathPoints = [];
-let line;
-let origin = null;
-let statusEl = document.getElementById("status");
+  <script>
+    // ===============================
+    // GLOBAL STATE
+    // ===============================
+    let scene, camera, renderer, controls;
+    let player, trailLine;
+    let pathPoints = [];
+    let origin = null;
 
-initScene();
-startGPS();
-animate();
+    const statusEl = document.getElementById("status");
+    const finishBtn = document.getElementById("finishBtn");
 
-function initScene() {
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0f172a);
+    // ===============================
+    // INIT
+    // ===============================
+    initScene();
+    startGPS();
+    animate();
 
-  camera = new THREE.PerspectiveCamera(
-    60,
-    window.innerWidth / window.innerHeight,
-    0.1,
-    10000
-  );
+    // ===============================
+    // SCENE SETUP
+    // ===============================
+    function initScene() {
 
-  camera.position.set(0, 150, 200);
-  camera.lookAt(0, 0, 0);
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0f172a);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  document.body.appendChild(renderer.domElement);
+      camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        10000
+      );
 
-  // Luz
-  const light = new THREE.DirectionalLight(0xffffff, 1);
-  light.position.set(100, 200, 100);
-  scene.add(light);
+      camera.position.set(0, 200, 200);
 
-  // Plano
-  const planeGeometry = new THREE.PlaneGeometry(2000, 2000);
-  const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x1e293b });
-  const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-  plane.rotation.x = -Math.PI / 2;
-  scene.add(plane);
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        preserveDrawingBuffer: true // necessário para screenshot
+      });
 
-  // Player
-  const playerGeometry = new THREE.BoxGeometry(5, 5, 5);
-  const playerMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
-  player = new THREE.Mesh(playerGeometry, playerMaterial);
-  player.position.y = 2.5;
-  scene.add(player);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
 
-  window.addEventListener("resize", onResize);
-}
+      // Orbit Controls (Touch + Zoom + Rotate)
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.screenSpacePanning = true;
+      controls.minDistance = 50;
+      controls.maxDistance = 1500;
+      controls.maxPolarAngle = Math.PI / 2.1;
 
-function onResize() {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-}
+      addLighting();
+      addGround();
+      createPlayer();
 
-function startGPS() {
-  if (!navigator.geolocation) {
-    statusEl.innerText = "Geolocalização não suportada.";
-    return;
-  }
+      window.addEventListener("resize", onResize);
+    }
 
-  navigator.geolocation.watchPosition(
-    (pos) => {
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
+    function addLighting() {
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(100, 200, 100);
+      scene.add(light);
+    }
+
+    function addGround() {
+      const geometry = new THREE.PlaneGeometry(5000, 5000);
+      const material = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+      const plane = new THREE.Mesh(geometry, material);
+      plane.rotation.x = -Math.PI / 2;
+      scene.add(plane);
+    }
+
+    function createPlayer() {
+      const geometry = new THREE.BoxGeometry(6, 6, 6);
+      const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      player = new THREE.Mesh(geometry, material);
+      player.position.y = 3;
+      scene.add(player);
+    }
+
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // ===============================
+    // GPS
+    // ===============================
+    function startGPS() {
+
+      if (!navigator.geolocation) {
+        statusEl.innerText = "Geolocalização não suportada.";
+        return;
+      }
+
+      navigator.geolocation.watchPosition(
+        handlePosition,
+        () => statusEl.innerText = "Erro ao obter GPS.",
+        { enableHighAccuracy: true, maximumAge: 0 }
+      );
+    }
+
+    function handlePosition(pos) {
+      const { latitude, longitude } = pos.coords;
 
       if (!origin) {
-        origin = { lat, lng };
+        origin = { latitude, longitude };
         statusEl.innerText = "GPS conectado. Caminhando...";
       }
 
-      const scale = 111139; // metros por grau aproximado
+      const scale = 111139; // metros aproximados por grau
 
-      const dx = (lng - origin.lng) * scale;
-      const dz = (lat - origin.lat) * scale;
+      const dx = (longitude - origin.longitude) * scale;
+      const dz = (latitude - origin.latitude) * scale;
 
-      updatePlayer(dx, dz);
-    },
-    (err) => {
-      statusEl.innerText = "Erro ao obter GPS.";
-    },
-    { enableHighAccuracy: true, maximumAge: 0 }
-  );
-}
+      updatePlayerPosition(dx, dz);
+    }
 
-function updatePlayer(x, z) {
-  const newPosition = new THREE.Vector3(x, 2.5, z);
+    // ===============================
+    // PLAYER + TRAIL
+    // ===============================
+    function updatePlayerPosition(x, z) {
 
-  if (pathPoints.length > 0) {
-    const last = pathPoints[pathPoints.length - 1];
-    if (last.distanceTo(newPosition) < 1) return; // ignora jitter
-  }
+      const newPosition = new THREE.Vector3(x, 3, z);
 
-  player.position.set(x, 2.5, z);
-  pathPoints.push(newPosition.clone());
+      // Ignora jitter muito pequeno
+      if (pathPoints.length > 0) {
+        const last = pathPoints[pathPoints.length - 1];
+        if (last.distanceTo(newPosition) < 1) return;
+      }
 
-  updateTrail();
-}
+      player.position.set(x, 3, z);
+      pathPoints.push(newPosition.clone());
 
-function updateTrail() {
-  if (line) {
-    scene.remove(line);
-  }
+      updateTrail();
+    }
 
-  const geometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
-  const material = new THREE.LineBasicMaterial({ color: 0xf97316 });
-  line = new THREE.Line(geometry, material);
+    function updateTrail() {
 
-  scene.add(line);
-}
+      if (trailLine) {
+        scene.remove(trailLine);
+      }
 
-function animate() {
-  requestAnimationFrame(animate);
-  renderer.render(scene, camera);
-}
+      const geometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+      const material = new THREE.LineBasicMaterial({ color: 0xf97316 });
+      trailLine = new THREE.Line(geometry, material);
 
-document.getElementById("finishBtn").addEventListener("click", () => {
-  const image = renderer.domElement.toDataURL("image/png");
-  const link = document.createElement("a");
-  link.href = image;
-  link.download = "pathmesh-trilha.png";
-  link.click();
-});
-</script>
+      scene.add(trailLine);
+    }
+
+    // ===============================
+    // RENDER LOOP
+    // ===============================
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // ===============================
+    // SCREENSHOT
+    // ===============================
+    finishBtn.addEventListener("click", () => {
+      const image = renderer.domElement.toDataURL("image/png");
+      const link = document.createElement("a");
+      link.href = image;
+      link.download = "pathmesh-trilha.png";
+      link.click();
+    });
+
+  </script>
 
 </body>
 </html>
