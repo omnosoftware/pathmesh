@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>PathMesh</title>
+
 <style>
 html, body {
     margin: 0;
@@ -13,30 +14,26 @@ html, body {
     background: #000;
 }
 
-#ui {
+#status {
     position: absolute;
-    bottom: 0;
+    bottom: 90px;
     width: 100%;
     text-align: center;
+    color: white;
+    font-size: 18px;
     z-index: 10;
 }
 
 button {
+    position: absolute;
+    bottom: 0;
     width: 100%;
     padding: 20px;
     font-size: 18px;
     border: none;
     background: #ff6f00;
     color: white;
-}
-
-#status {
-    position: absolute;
-    bottom: 80px;
-    width: 100%;
-    text-align: center;
-    color: white;
-    font-size: 18px;
+    z-index: 10;
 }
 
 #compass {
@@ -52,6 +49,7 @@ button {
     justify-content: center;
     color: white;
     font-weight: bold;
+    z-index: 10;
 }
 
 #miniMap {
@@ -62,207 +60,214 @@ button {
     height: 120px;
     background: rgba(0,0,0,0.4);
     border-radius: 10px;
+    z-index: 10;
 }
 </style>
 </head>
 <body>
 
 <div id="compass">N</div>
-<canvas id="miniMap"></canvas>
-
-<div id="status">Conectando GPS...</div>
-<div id="ui">
-    <button id="finishBtn">Finalizar Caminhada</button>
-</div>
+<canvas id="miniMap" width="120" height="120"></canvas>
+<div id="status">Toque na tela para iniciar GPS</div>
+<button id="finishBtn">Finalizar Caminhada</button>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
+
+// ---------------- SCENE ----------------
 const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x87ceeb)
 
-// Sky gradient
-const skyGeo = new THREE.SphereGeometry(5000, 32, 32)
-const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    uniforms: {
-        topColor: { value: new THREE.Color(0x87ceeb) },
-        bottomColor: { value: new THREE.Color(0xffffff) }
-    },
-    vertexShader: `
-        varying vec3 vWorldPosition;
-        void main() {
-            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-            vWorldPosition = worldPosition.xyz;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-    `,
-    fragmentShader: `
-        uniform vec3 topColor;
-        uniform vec3 bottomColor;
-        varying vec3 vWorldPosition;
-        void main() {
-            float h = normalize(vWorldPosition).y;
-            gl_FragColor = vec4(mix(bottomColor, topColor, max(h, 0.0)), 1.0);
-        }
-    `
-})
-scene.add(new THREE.Mesh(skyGeo, skyMat))
+const camera = new THREE.PerspectiveCamera(
+    60,
+    window.innerWidth/window.innerHeight,
+    0.1,
+    10000
+)
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 10000)
-camera.position.set(0, 40, 40)
+camera.position.set(0,40,40)
 
-const renderer = new THREE.WebGLRenderer({ antialias: true })
+const renderer = new THREE.WebGLRenderer({ antialias:true })
 renderer.setSize(window.innerWidth, window.innerHeight)
 document.body.appendChild(renderer.domElement)
 
-window.addEventListener('resize', () => {
+window.addEventListener('resize', ()=>{
     camera.aspect = window.innerWidth/window.innerHeight
     camera.updateProjectionMatrix()
     renderer.setSize(window.innerWidth, window.innerHeight)
 })
 
-// Light
-scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1))
+scene.add(new THREE.HemisphereLight(0xffffff,0x444444,1))
 
-// Player
+// ---------------- PLAYER ----------------
 const player = new THREE.Mesh(
-    new THREE.SphereGeometry(2, 16, 16),
-    new THREE.MeshStandardMaterial({ color: 0xff0000 })
+    new THREE.SphereGeometry(2,16,16),
+    new THREE.MeshStandardMaterial({ color:0xff0000 })
 )
 player.position.y = 2
 scene.add(player)
 
-// Trail
-const trailMaterial = new THREE.LineBasicMaterial({ color: 0xffaa00 })
+// ---------------- TRAIL ----------------
 const trailPoints = []
 const trailGeometry = new THREE.BufferGeometry()
+const trailMaterial = new THREE.LineBasicMaterial({ color:0xffaa00 })
 const trailLine = new THREE.Line(trailGeometry, trailMaterial)
 scene.add(trailLine)
 
-// Procedural chunks
+// ---------------- CHUNKS ----------------
 const chunkSize = 100
 const chunks = {}
 
-function generateChunk(cx, cz) {
-    const key = cx + "_" + cz
-    if (chunks[key]) return
+function generateChunk(cx, cz){
+    const key = cx+"_"+cz
+    if(chunks[key]) return
 
     const group = new THREE.Group()
 
     const ground = new THREE.Mesh(
-        new THREE.PlaneGeometry(chunkSize, chunkSize),
-        new THREE.MeshStandardMaterial({ color: 0x2e7d32 })
+        new THREE.PlaneGeometry(chunkSize,chunkSize),
+        new THREE.MeshStandardMaterial({ color:0x2e7d32 })
     )
+
     ground.rotation.x = -Math.PI/2
-    ground.position.set(cx*chunkSize + chunkSize/2, 0, cz*chunkSize + chunkSize/2)
+    ground.position.set(
+        cx*chunkSize+chunkSize/2,
+        0,
+        cz*chunkSize+chunkSize/2
+    )
+
     group.add(ground)
 
-    for (let i=0;i<8;i++) {
+    for(let i=0;i<6;i++){
         const tree = new THREE.Mesh(
             new THREE.ConeGeometry(3,8,8),
-            new THREE.MeshStandardMaterial({ color: 0x1b5e20 })
+            new THREE.MeshStandardMaterial({ color:0x1b5e20 })
         )
         tree.position.set(
-            ground.position.x + (Math.random()-0.5)*chunkSize,
+            ground.position.x+(Math.random()-0.5)*chunkSize,
             4,
-            ground.position.z + (Math.random()-0.5)*chunkSize
+            ground.position.z+(Math.random()-0.5)*chunkSize
         )
         group.add(tree)
     }
 
     scene.add(group)
-    chunks[key] = group
+    chunks[key]=group
 }
 
-function checkChunks() {
-    const cx = Math.floor(player.position.x/chunkSize)
-    const cz = Math.floor(player.position.z/chunkSize)
-    for (let x=-1;x<=1;x++) {
-        for (let z=-1;z<=1;z++) {
-            generateChunk(cx+x, cz+z)
+function checkChunks(){
+    const cx=Math.floor(player.position.x/chunkSize)
+    const cz=Math.floor(player.position.z/chunkSize)
+
+    for(let x=-1;x<=1;x++){
+        for(let z=-1;z<=1;z++){
+            generateChunk(cx+x,cz+z)
         }
     }
 }
 
-// Camera
+// ---------------- CAMERA ----------------
 let cameraTarget = new THREE.Vector3()
 let zoom = 40
 let cameraMode = "follow"
-let isDragging = false
+let isDragging=false
 let prevTouch
 
-function updateCamera() {
-    if (cameraMode === "follow") {
+function updateCamera(){
+    if(cameraMode==="follow"){
         cameraTarget.copy(player.position)
     }
 
     const desired = new THREE.Vector3(
         cameraTarget.x,
         zoom,
-        cameraTarget.z + zoom
+        cameraTarget.z+zoom
     )
-    camera.position.lerp(desired, 0.1)
+
+    camera.position.lerp(desired,0.1)
     camera.lookAt(cameraTarget)
 }
 
-renderer.domElement.addEventListener("touchstart", e=>{
+renderer.domElement.addEventListener("touchstart",e=>{
     isDragging=true
     prevTouch=e.touches[0]
     cameraMode="free"
 })
 
-renderer.domElement.addEventListener("touchmove", e=>{
+renderer.domElement.addEventListener("touchmove",e=>{
     if(!isDragging)return
     const t=e.touches[0]
     const dx=t.clientX-prevTouch.clientX
     const dy=t.clientY-prevTouch.clientY
+
     cameraTarget.x-=dx*0.5
     cameraTarget.z+=dy*0.5
+
     prevTouch=t
 })
 
-renderer.domElement.addEventListener("touchend", ()=>isDragging=false)
+renderer.domElement.addEventListener("touchend",()=>{
+    isDragging=false
+})
 
-renderer.domElement.addEventListener("wheel", e=>{
+renderer.domElement.addEventListener("wheel",e=>{
     zoom+=e.deltaY*0.1
     if(zoom<5)zoom=5
 })
 
-// GPS
+// ---------------- GPS ----------------
 let originLat=null
 let originLon=null
 const scale=10000
+let gpsStarted=false
 
-navigator.geolocation.watchPosition(pos=>{
-    document.getElementById("status").innerText="GPS conectado"
+function startGPS(){
 
-    if(originLat===null){
-        originLat=pos.coords.latitude
-        originLon=pos.coords.longitude
-    }
+    if(gpsStarted) return
+    gpsStarted=true
 
-    const dx=(pos.coords.longitude-originLon)*scale
-    const dz=(pos.coords.latitude-originLat)*scale
+    document.getElementById("status").innerText="Conectando GPS..."
 
-    player.position.x=dx
-    player.position.z=dz
+    navigator.geolocation.watchPosition(pos=>{
 
-    trailPoints.push(new THREE.Vector3(dx,2,dz))
-    trailGeometry.setFromPoints(trailPoints)
+        document.getElementById("status").innerText="GPS conectado"
 
-    checkChunks()
+        if(originLat===null){
+            originLat=pos.coords.latitude
+            originLon=pos.coords.longitude
+        }
 
-},{ enableHighAccuracy:true })
+        const dx=(pos.coords.longitude-originLon)*scale
+        const dz=(pos.coords.latitude-originLat)*scale
 
-// Compass
-window.addEventListener("deviceorientation", e=>{
+        player.position.x=dx
+        player.position.z=dz
+
+        trailPoints.push(new THREE.Vector3(dx,2,dz))
+        trailGeometry.setFromPoints(trailPoints)
+
+        checkChunks()
+
+    },err=>{
+        document.getElementById("status").innerText="Erro GPS"
+        console.log(err)
+    },{
+        enableHighAccuracy:true
+    })
+}
+
+document.body.addEventListener("click",startGPS,{once:true})
+
+// ---------------- COMPASS ----------------
+window.addEventListener("deviceorientation",e=>{
     if(e.alpha!==null){
         document.getElementById("compass").style.transform=
             "rotate("+(-e.alpha)+"deg)"
     }
 })
 
-// MiniMap
+// ---------------- MINI MAP ----------------
 const miniCanvas=document.getElementById("miniMap")
 const miniCtx=miniCanvas.getContext("2d")
 
@@ -284,7 +289,7 @@ function drawMiniMap(){
     miniCtx.fillRect(60,60,4,4)
 }
 
-// Screenshot
+// ---------------- SCREENSHOT ----------------
 document.getElementById("finishBtn").addEventListener("click",()=>{
     const dataURL=renderer.domElement.toDataURL("image/png")
     const link=document.createElement("a")
@@ -293,14 +298,16 @@ document.getElementById("finishBtn").addEventListener("click",()=>{
     link.click()
 })
 
-// Animate
+// ---------------- LOOP ----------------
 function animate(){
     requestAnimationFrame(animate)
     updateCamera()
     drawMiniMap()
     renderer.render(scene,camera)
 }
+
 animate()
+
 </script>
 </body>
 </html>
