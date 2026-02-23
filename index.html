@@ -2,429 +2,305 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>PathMesh</title>
-
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden;font-family:sans-serif}
-canvas{display:block}
-
-.overlay{
-  position:fixed;
-  bottom:20px;
-  left:50%;
-  transform:translateX(-50%);
-  width:90%;
-  max-width:400px;
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-  z-index:10;
+html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    font-family: sans-serif;
+    background: #000;
 }
 
-.status{text-align:center;color:white;font-size:14px}
-
-button{
-  padding:14px;
-  border:none;
-  border-radius:12px;
-  background:#f97316;
-  color:white;
-  font-size:16px;
-  font-weight:bold;
+#ui {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    text-align: center;
+    z-index: 10;
 }
 
-#compass{
-  position:fixed;
-  top:20px;
-  left:20px;
-  width:80px;
-  height:80px;
-  border-radius:50%;
-  background:white;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-weight:bold;
-  z-index:10;
+button {
+    width: 100%;
+    padding: 20px;
+    font-size: 18px;
+    border: none;
+    background: #ff6f00;
+    color: white;
 }
 
-#minimap{
-  position:fixed;
-  top:20px;
-  right:20px;
-  width:120px;
-  height:120px;
-  background:rgba(255,255,255,0.8);
-  border-radius:12px;
-  z-index:10;
+#status {
+    position: absolute;
+    bottom: 80px;
+    width: 100%;
+    text-align: center;
+    color: white;
+    font-size: 18px;
+}
+
+#compass {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+}
+
+#miniMap {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 120px;
+    height: 120px;
+    background: rgba(0,0,0,0.4);
+    border-radius: 10px;
 }
 </style>
 </head>
-
 <body>
 
 <div id="compass">N</div>
-<canvas id="minimap"></canvas>
+<canvas id="miniMap"></canvas>
 
-<div class="overlay">
-  <div class="status" id="status">Aguardando GPS...</div>
-  <button id="finishBtn">Finalizar Caminhada</button>
-  <button id="cameraBtn">Modo Câmera</button>
+<div id="status">Conectando GPS...</div>
+<div id="ui">
+    <button id="finishBtn">Finalizar Caminhada</button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
+const scene = new THREE.Scene()
 
-/* =====================================================
-   CORE VARIABLES
-===================================================== */
-
-let scene, camera, renderer
-let player, trail
-let origin = null
-let pathPoints = []
-let heading = 0
-let statusEl = document.getElementById("status")
-
-/* =====================================================
-   CAMERA SYSTEM (PRO)
-===================================================== */
-
-const CameraModes = {
-  ORBIT: "ORBIT",
-  FOLLOW: "FOLLOW",
-  FREE: "FREE"
-}
-
-let cameraMode = CameraModes.FOLLOW
-
-let radius = 180
-let theta = 0
-let phi = 1.2
-
-let targetRadius = 180
-let targetTheta = 0
-let targetPhi = 1.2
-
-const minPhi = 0.15
-const maxPhi = Math.PI - 0.15
-
-let freeOffset = new THREE.Vector3(0,120,180)
-let lastPlayerPos = new THREE.Vector3()
-let moveDirection = new THREE.Vector3()
-
-/* =====================================================
-   INIT
-===================================================== */
-
-init()
-animate()
-initGPS()
-initCompass()
-initTouch()
-
-function init(){
-
-  scene = new THREE.Scene()
-
-  // SKY
-  const skyGeo = new THREE.SphereGeometry(6000,32,32)
-  const skyMat = new THREE.ShaderMaterial({
-    side:THREE.BackSide,
-    uniforms:{
-      topColor:{value:new THREE.Color(0x87ceeb)},
-      bottomColor:{value:new THREE.Color(0xffffff)}
+// Sky gradient
+const skyGeo = new THREE.SphereGeometry(5000, 32, 32)
+const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+        topColor: { value: new THREE.Color(0x87ceeb) },
+        bottomColor: { value: new THREE.Color(0xffffff) }
     },
-    vertexShader:`
-      varying vec3 vWorldPosition;
-      void main(){
-        vec4 worldPosition = modelMatrix * vec4(position,1.0);
-        vWorldPosition = worldPosition.xyz;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-      }
+    vertexShader: `
+        varying vec3 vWorldPosition;
+        void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
     `,
-    fragmentShader:`
-      uniform vec3 topColor;
-      uniform vec3 bottomColor;
-      varying vec3 vWorldPosition;
-      void main(){
-        float h = normalize(vWorldPosition).y;
-        gl_FragColor = vec4(mix(bottomColor,topColor,max(h,0.0)),1.0);
-      }
+    fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 bottomColor;
+        varying vec3 vWorldPosition;
+        void main() {
+            float h = normalize(vWorldPosition).y;
+            gl_FragColor = vec4(mix(bottomColor, topColor, max(h, 0.0)), 1.0);
+        }
     `
-  })
-  scene.add(new THREE.Mesh(skyGeo,skyMat))
+})
+scene.add(new THREE.Mesh(skyGeo, skyMat))
 
-  camera = new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,200000)
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 10000)
+camera.position.set(0, 40, 40)
 
-  renderer = new THREE.WebGLRenderer({
-    antialias:true,
-    preserveDrawingBuffer:true
-  })
-  renderer.setSize(innerWidth,innerHeight)
-  document.body.appendChild(renderer.domElement)
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+document.body.appendChild(renderer.domElement)
 
-  scene.add(new THREE.AmbientLight(0xffffff,0.7))
-  const sun = new THREE.DirectionalLight(0xffffff,1)
-  sun.position.set(300,400,200)
-  scene.add(sun)
-
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(10000,10000),
-    new THREE.MeshStandardMaterial({color:0x3da13d})
-  )
-  ground.rotation.x = -Math.PI/2
-  scene.add(ground)
-
-  player = new THREE.Mesh(
-    new THREE.SphereGeometry(4,16,16),
-    new THREE.MeshStandardMaterial({color:0xff0000})
-  )
-  player.position.y = 4
-  scene.add(player)
-
-  window.addEventListener("resize",()=>{
-    camera.aspect = innerWidth/innerHeight
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight
     camera.updateProjectionMatrix()
-    renderer.setSize(innerWidth,innerHeight)
-  })
+    renderer.setSize(window.innerWidth, window.innerHeight)
+})
 
-  document.getElementById("cameraBtn").onclick = switchCameraMode
-}
+// Light
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1))
 
-/* =====================================================
-   CAMERA UPDATE
-===================================================== */
+// Player
+const player = new THREE.Mesh(
+    new THREE.SphereGeometry(2, 16, 16),
+    new THREE.MeshStandardMaterial({ color: 0xff0000 })
+)
+player.position.y = 2
+scene.add(player)
 
-function updateCamera(){
+// Trail
+const trailMaterial = new THREE.LineBasicMaterial({ color: 0xffaa00 })
+const trailPoints = []
+const trailGeometry = new THREE.BufferGeometry()
+const trailLine = new THREE.Line(trailGeometry, trailMaterial)
+scene.add(trailLine)
 
-  radius += (targetRadius-radius)*0.08
-  theta += (targetTheta-theta)*0.08
-  phi += (targetPhi-phi)*0.08
+// Procedural chunks
+const chunkSize = 100
+const chunks = {}
 
-  phi = Math.max(minPhi,Math.min(maxPhi,phi))
+function generateChunk(cx, cz) {
+    const key = cx + "_" + cz
+    if (chunks[key]) return
 
-  if(cameraMode===CameraModes.ORBIT){
+    const group = new THREE.Group()
 
-    const x = radius*Math.sin(phi)*Math.cos(theta)
-    const y = radius*Math.cos(phi)
-    const z = radius*Math.sin(phi)*Math.sin(theta)
-
-    camera.position.set(
-      player.position.x + x,
-      player.position.y + y,
-      player.position.z + z
+    const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(chunkSize, chunkSize),
+        new THREE.MeshStandardMaterial({ color: 0x2e7d32 })
     )
-    camera.lookAt(player.position)
-  }
+    ground.rotation.x = -Math.PI/2
+    ground.position.set(cx*chunkSize + chunkSize/2, 0, cz*chunkSize + chunkSize/2)
+    group.add(ground)
 
-  if(cameraMode===CameraModes.FOLLOW){
-
-    moveDirection.subVectors(player.position,lastPlayerPos)
-
-    if(moveDirection.length()>0.5){
-      moveDirection.normalize()
-      targetTheta = Math.atan2(moveDirection.z,moveDirection.x)
+    for (let i=0;i<8;i++) {
+        const tree = new THREE.Mesh(
+            new THREE.ConeGeometry(3,8,8),
+            new THREE.MeshStandardMaterial({ color: 0x1b5e20 })
+        )
+        tree.position.set(
+            ground.position.x + (Math.random()-0.5)*chunkSize,
+            4,
+            ground.position.z + (Math.random()-0.5)*chunkSize
+        )
+        group.add(tree)
     }
 
-    const x = radius*Math.sin(phi)*Math.cos(targetTheta)
-    const y = radius*Math.cos(phi)
-    const z = radius*Math.sin(phi)*Math.sin(targetTheta)
+    scene.add(group)
+    chunks[key] = group
+}
 
-    camera.position.set(
-      player.position.x - x,
-      player.position.y + y,
-      player.position.z - z
+function checkChunks() {
+    const cx = Math.floor(player.position.x/chunkSize)
+    const cz = Math.floor(player.position.z/chunkSize)
+    for (let x=-1;x<=1;x++) {
+        for (let z=-1;z<=1;z++) {
+            generateChunk(cx+x, cz+z)
+        }
+    }
+}
+
+// Camera
+let cameraTarget = new THREE.Vector3()
+let zoom = 40
+let cameraMode = "follow"
+let isDragging = false
+let prevTouch
+
+function updateCamera() {
+    if (cameraMode === "follow") {
+        cameraTarget.copy(player.position)
+    }
+
+    const desired = new THREE.Vector3(
+        cameraTarget.x,
+        zoom,
+        cameraTarget.z + zoom
     )
-    camera.lookAt(player.position)
-  }
-
-  if(cameraMode===CameraModes.FREE){
-
-    const desired = player.position.clone().add(freeOffset)
-    camera.position.lerp(desired,0.05)
-    camera.lookAt(player.position)
-  }
-
-  lastPlayerPos.copy(player.position)
+    camera.position.lerp(desired, 0.1)
+    camera.lookAt(cameraTarget)
 }
 
-/* =====================================================
-   TOUCH
-===================================================== */
+renderer.domElement.addEventListener("touchstart", e=>{
+    isDragging=true
+    prevTouch=e.touches[0]
+    cameraMode="free"
+})
 
-function initTouch(){
+renderer.domElement.addEventListener("touchmove", e=>{
+    if(!isDragging)return
+    const t=e.touches[0]
+    const dx=t.clientX-prevTouch.clientX
+    const dy=t.clientY-prevTouch.clientY
+    cameraTarget.x-=dx*0.5
+    cameraTarget.z+=dy*0.5
+    prevTouch=t
+})
 
-  let lastX=0,lastY=0,lastDist=0
+renderer.domElement.addEventListener("touchend", ()=>isDragging=false)
 
-  renderer.domElement.addEventListener("touchstart",e=>{
-    if(e.touches.length===1){
-      lastX=e.touches[0].clientX
-      lastY=e.touches[0].clientY
-    }
-    if(e.touches.length===2){
-      lastDist=getDist(e.touches)
-    }
-  })
+renderer.domElement.addEventListener("wheel", e=>{
+    zoom+=e.deltaY*0.1
+    if(zoom<5)zoom=5
+})
 
-  renderer.domElement.addEventListener("touchmove",e=>{
+// GPS
+let originLat=null
+let originLon=null
+const scale=10000
 
-    if(cameraMode!==CameraModes.FREE){
+navigator.geolocation.watchPosition(pos=>{
+    document.getElementById("status").innerText="GPS conectado"
 
-      if(e.touches.length===1){
-        targetTheta -= (e.touches[0].clientX-lastX)*0.005
-        targetPhi   -= (e.touches[0].clientY-lastY)*0.005
-        lastX=e.touches[0].clientX
-        lastY=e.touches[0].clientY
-      }
-
-      if(e.touches.length===2){
-        const newDist=getDist(e.touches)
-        targetRadius -= (newDist-lastDist)*0.6
-        targetRadius=Math.max(5,targetRadius)
-        lastDist=newDist
-      }
-    }
-  })
-
-  function getDist(t){
-    const dx=t[0].clientX-t[1].clientX
-    const dy=t[0].clientY-t[1].clientY
-    return Math.sqrt(dx*dx+dy*dy)
-  }
-}
-
-/* =====================================================
-   GPS
-===================================================== */
-
-function initGPS(){
-
-  if(!navigator.geolocation){
-    statusEl.innerText="GPS não suportado"
-    return
-  }
-
-  navigator.geolocation.watchPosition(pos=>{
-
-    const lat=pos.coords.latitude
-    const lng=pos.coords.longitude
-
-    if(!origin){
-      origin={lat,lng}
-      statusEl.innerText="GPS conectado"
+    if(originLat===null){
+        originLat=pos.coords.latitude
+        originLon=pos.coords.longitude
     }
 
-    const scale=111139
-    const x=(lng-origin.lng)*scale
-    const z=(lat-origin.lat)*scale
+    const dx=(pos.coords.longitude-originLon)*scale
+    const dz=(pos.coords.latitude-originLat)*scale
 
-    updatePlayer(x,z)
+    player.position.x=dx
+    player.position.z=dz
 
-  },()=>statusEl.innerText="Erro GPS",{enableHighAccuracy:true})
-}
+    trailPoints.push(new THREE.Vector3(dx,2,dz))
+    trailGeometry.setFromPoints(trailPoints)
 
-function updatePlayer(x,z){
+    checkChunks()
 
-  const newPos=new THREE.Vector3(x,4,z)
+},{ enableHighAccuracy:true })
 
-  if(pathPoints.length>0 &&
-     pathPoints[pathPoints.length-1].distanceTo(newPos)<1) return
+// Compass
+window.addEventListener("deviceorientation", e=>{
+    if(e.alpha!==null){
+        document.getElementById("compass").style.transform=
+            "rotate("+(-e.alpha)+"deg)"
+    }
+})
 
-  player.position.copy(newPos)
-  pathPoints.push(newPos.clone())
-  updateTrail()
-  updateMiniMap()
-}
+// MiniMap
+const miniCanvas=document.getElementById("miniMap")
+const miniCtx=miniCanvas.getContext("2d")
 
-function updateTrail(){
-  if(trail) scene.remove(trail)
-  trail=new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(pathPoints),
-    new THREE.LineBasicMaterial({color:0xf97316})
-  )
-  scene.add(trail)
-}
+function drawMiniMap(){
+    miniCtx.clearRect(0,0,120,120)
+    miniCtx.fillStyle="green"
+    miniCtx.fillRect(0,0,120,120)
 
-/* =====================================================
-   COMPASS
-===================================================== */
-
-function initCompass(){
-  if(typeof DeviceOrientationEvent!=="undefined"){
-    window.addEventListener("deviceorientation",e=>{
-      heading=e.alpha||0
-      document.getElementById("compass").style.transform =
-        "rotate("+(-heading)+"deg)"
+    miniCtx.fillStyle="orange"
+    trailPoints.forEach(p=>{
+        miniCtx.fillRect(
+            60+p.x*0.02,
+            60+p.z*0.02,
+            2,2
+        )
     })
-  }
+
+    miniCtx.fillStyle="red"
+    miniCtx.fillRect(60,60,4,4)
 }
 
-/* =====================================================
-   MINIMAP
-===================================================== */
+// Screenshot
+document.getElementById("finishBtn").addEventListener("click",()=>{
+    const dataURL=renderer.domElement.toDataURL("image/png")
+    const link=document.createElement("a")
+    link.href=dataURL
+    link.download="pathmesh.png"
+    link.click()
+})
 
-function updateMiniMap(){
-
-  const canvas=document.getElementById("minimap")
-  const ctx=canvas.getContext("2d")
-  canvas.width=120
-  canvas.height=120
-
-  ctx.fillStyle="green"
-  ctx.fillRect(0,0,canvas.width,canvas.height)
-
-  ctx.strokeStyle="orange"
-  ctx.beginPath()
-
-  pathPoints.forEach((p,i)=>{
-    const mx=canvas.width/2 + p.x*0.02
-    const mz=canvas.height/2 + p.z*0.02
-    if(i===0) ctx.moveTo(mx,mz)
-    else ctx.lineTo(mx,mz)
-  })
-
-  ctx.stroke()
-
-  ctx.fillStyle="red"
-  ctx.beginPath()
-  ctx.arc(canvas.width/2,canvas.height/2,4,0,Math.PI*2)
-  ctx.fill()
-}
-
-/* =====================================================
-   LOOP
-===================================================== */
-
+// Animate
 function animate(){
-  requestAnimationFrame(animate)
-  updateCamera()
-  renderer.render(scene,camera)
+    requestAnimationFrame(animate)
+    updateCamera()
+    drawMiniMap()
+    renderer.render(scene,camera)
 }
-
-/* =====================================================
-   UTILS
-===================================================== */
-
-function switchCameraMode(){
-  if(cameraMode===CameraModes.ORBIT) cameraMode=CameraModes.FOLLOW
-  else if(cameraMode===CameraModes.FOLLOW) cameraMode=CameraModes.FREE
-  else cameraMode=CameraModes.ORBIT
-  console.log("Modo:",cameraMode)
-}
-
-document.getElementById("finishBtn").onclick=()=>{
-  renderer.render(scene,camera)
-  const image=renderer.domElement.toDataURL("image/png")
-  const link=document.createElement("a")
-  link.href=image
-  link.download="pathmesh-trilha.png"
-  link.click()
-}
-
+animate()
 </script>
 </body>
 </html>
