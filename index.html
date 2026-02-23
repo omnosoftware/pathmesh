@@ -6,12 +6,11 @@
 <title>PathMesh</title>
 
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-html,body { width:100%; height:100%; overflow:hidden; font-family:sans-serif; }
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;font-family:sans-serif}
+canvas{display:block}
 
-canvas { display:block; }
-
-.overlay {
+.overlay{
   position:fixed;
   bottom:20px;
   left:50%;
@@ -24,13 +23,9 @@ canvas { display:block; }
   z-index:10;
 }
 
-.status {
-  text-align:center;
-  color:white;
-  font-size:14px;
-}
+.status{text-align:center;color:white;font-size:14px}
 
-button {
+button{
   padding:14px;
   border:none;
   border-radius:12px;
@@ -40,7 +35,7 @@ button {
   font-weight:bold;
 }
 
-#compass {
+#compass{
   position:fixed;
   top:20px;
   left:20px;
@@ -55,7 +50,7 @@ button {
   z-index:10;
 }
 
-#minimap {
+#minimap{
   position:fixed;
   top:20px;
   right:20px;
@@ -76,230 +71,360 @@ button {
 <div class="overlay">
   <div class="status" id="status">Aguardando GPS...</div>
   <button id="finishBtn">Finalizar Caminhada</button>
+  <button id="cameraBtn">Modo Câmera</button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
-let scene, camera, renderer;
-let player, trail;
-let pathPoints = [];
-let origin = null;
-let heading = 0;
-let statusEl = document.getElementById("status");
 
-init();
-animate();
-startGPS();
-initCompass();
+/* =====================================================
+   CORE VARIABLES
+===================================================== */
 
-function init() {
-  scene = new THREE.Scene();
+let scene, camera, renderer
+let player, trail
+let origin = null
+let pathPoints = []
+let heading = 0
+let statusEl = document.getElementById("status")
 
-  // 🌤 Céu gradiente
-  const skyGeo = new THREE.SphereGeometry(5000, 32, 32);
+/* =====================================================
+   CAMERA SYSTEM (PRO)
+===================================================== */
+
+const CameraModes = {
+  ORBIT: "ORBIT",
+  FOLLOW: "FOLLOW",
+  FREE: "FREE"
+}
+
+let cameraMode = CameraModes.FOLLOW
+
+let radius = 180
+let theta = 0
+let phi = 1.2
+
+let targetRadius = 180
+let targetTheta = 0
+let targetPhi = 1.2
+
+const minPhi = 0.15
+const maxPhi = Math.PI - 0.15
+
+let freeOffset = new THREE.Vector3(0,120,180)
+let lastPlayerPos = new THREE.Vector3()
+let moveDirection = new THREE.Vector3()
+
+/* =====================================================
+   INIT
+===================================================== */
+
+init()
+animate()
+initGPS()
+initCompass()
+initTouch()
+
+function init(){
+
+  scene = new THREE.Scene()
+
+  // SKY
+  const skyGeo = new THREE.SphereGeometry(6000,32,32)
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    uniforms: {
-      topColor: { value: new THREE.Color(0x87ceeb) },
-      bottomColor: { value: new THREE.Color(0xffffff) }
+    side:THREE.BackSide,
+    uniforms:{
+      topColor:{value:new THREE.Color(0x87ceeb)},
+      bottomColor:{value:new THREE.Color(0xffffff)}
     },
-    vertexShader: `
+    vertexShader:`
       varying vec3 vWorldPosition;
-      void main() {
-        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+      void main(){
+        vec4 worldPosition = modelMatrix * vec4(position,1.0);
         vWorldPosition = worldPosition.xyz;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
       }
     `,
-    fragmentShader: `
+    fragmentShader:`
       uniform vec3 topColor;
       uniform vec3 bottomColor;
       varying vec3 vWorldPosition;
-      void main() {
+      void main(){
         float h = normalize(vWorldPosition).y;
-        gl_FragColor = vec4(mix(bottomColor, topColor, max(h,0.0)), 1.0);
+        gl_FragColor = vec4(mix(bottomColor,topColor,max(h,0.0)),1.0);
       }
     `
-  });
-  scene.add(new THREE.Mesh(skyGeo, skyMat));
+  })
+  scene.add(new THREE.Mesh(skyGeo,skyMat))
 
-  camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 10000);
+  camera = new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,200000)
 
-  renderer = new THREE.WebGLRenderer({ antialias:true });
-  renderer.setSize(innerWidth, innerHeight);
-  document.body.appendChild(renderer.domElement);
+  renderer = new THREE.WebGLRenderer({
+    antialias:true,
+    preserveDrawingBuffer:true
+  })
+  renderer.setSize(innerWidth,innerHeight)
+  document.body.appendChild(renderer.domElement)
 
-  scene.add(new THREE.AmbientLight(0xffffff,0.7));
-  const sun = new THREE.DirectionalLight(0xffffff,1);
-  sun.position.set(300,400,200);
-  scene.add(sun);
+  scene.add(new THREE.AmbientLight(0xffffff,0.7))
+  const sun = new THREE.DirectionalLight(0xffffff,1)
+  sun.position.set(300,400,200)
+  scene.add(sun)
 
-  // 🌱 chão
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(4000,4000),
-    new THREE.MeshStandardMaterial({ color:0x3da13d })
-  );
-  ground.rotation.x = -Math.PI/2;
-  scene.add(ground);
+    new THREE.PlaneGeometry(10000,10000),
+    new THREE.MeshStandardMaterial({color:0x3da13d})
+  )
+  ground.rotation.x = -Math.PI/2
+  scene.add(ground)
 
-  // 👤 player
   player = new THREE.Mesh(
     new THREE.SphereGeometry(4,16,16),
-    new THREE.MeshStandardMaterial({ color:0xff0000 })
-  );
-  player.position.y = 4;
-  scene.add(player);
-
-  // 🌳 árvores
-  for(let i=0;i<50;i++){
-    createTree((Math.random()-0.5)*3000,(Math.random()-0.5)*3000);
-  }
-
-  // 🌄 montanhas
-  for(let i=0;i<20;i++){
-    createMountain((Math.random()-0.5)*3500,(Math.random()-0.5)*3500);
-  }
+    new THREE.MeshStandardMaterial({color:0xff0000})
+  )
+  player.position.y = 4
+  scene.add(player)
 
   window.addEventListener("resize",()=>{
-    camera.aspect = innerWidth/innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth,innerHeight);
-  });
+    camera.aspect = innerWidth/innerHeight
+    camera.updateProjectionMatrix()
+    renderer.setSize(innerWidth,innerHeight)
+  })
+
+  document.getElementById("cameraBtn").onclick = switchCameraMode
 }
 
-function createTree(x,z){
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(2,2,20),
-    new THREE.MeshStandardMaterial({ color:0x8b5a2b })
-  );
-  trunk.position.set(x,10,z);
-  scene.add(trunk);
+/* =====================================================
+   CAMERA UPDATE
+===================================================== */
 
-  const leaves = new THREE.Mesh(
-    new THREE.ConeGeometry(10,30,8),
-    new THREE.MeshStandardMaterial({ color:0x1f7a1f })
-  );
-  leaves.position.set(x,30,z);
-  scene.add(leaves);
+function updateCamera(){
+
+  radius += (targetRadius-radius)*0.08
+  theta += (targetTheta-theta)*0.08
+  phi += (targetPhi-phi)*0.08
+
+  phi = Math.max(minPhi,Math.min(maxPhi,phi))
+
+  if(cameraMode===CameraModes.ORBIT){
+
+    const x = radius*Math.sin(phi)*Math.cos(theta)
+    const y = radius*Math.cos(phi)
+    const z = radius*Math.sin(phi)*Math.sin(theta)
+
+    camera.position.set(
+      player.position.x + x,
+      player.position.y + y,
+      player.position.z + z
+    )
+    camera.lookAt(player.position)
+  }
+
+  if(cameraMode===CameraModes.FOLLOW){
+
+    moveDirection.subVectors(player.position,lastPlayerPos)
+
+    if(moveDirection.length()>0.5){
+      moveDirection.normalize()
+      targetTheta = Math.atan2(moveDirection.z,moveDirection.x)
+    }
+
+    const x = radius*Math.sin(phi)*Math.cos(targetTheta)
+    const y = radius*Math.cos(phi)
+    const z = radius*Math.sin(phi)*Math.sin(targetTheta)
+
+    camera.position.set(
+      player.position.x - x,
+      player.position.y + y,
+      player.position.z - z
+    )
+    camera.lookAt(player.position)
+  }
+
+  if(cameraMode===CameraModes.FREE){
+
+    const desired = player.position.clone().add(freeOffset)
+    camera.position.lerp(desired,0.05)
+    camera.lookAt(player.position)
+  }
+
+  lastPlayerPos.copy(player.position)
 }
 
-function createMountain(x,z){
-  const mountain = new THREE.Mesh(
-    new THREE.ConeGeometry(80,200,4),
-    new THREE.MeshStandardMaterial({ color:0x888888 })
-  );
-  mountain.position.set(x,100,z);
-  scene.add(mountain);
+/* =====================================================
+   TOUCH
+===================================================== */
+
+function initTouch(){
+
+  let lastX=0,lastY=0,lastDist=0
+
+  renderer.domElement.addEventListener("touchstart",e=>{
+    if(e.touches.length===1){
+      lastX=e.touches[0].clientX
+      lastY=e.touches[0].clientY
+    }
+    if(e.touches.length===2){
+      lastDist=getDist(e.touches)
+    }
+  })
+
+  renderer.domElement.addEventListener("touchmove",e=>{
+
+    if(cameraMode!==CameraModes.FREE){
+
+      if(e.touches.length===1){
+        targetTheta -= (e.touches[0].clientX-lastX)*0.005
+        targetPhi   -= (e.touches[0].clientY-lastY)*0.005
+        lastX=e.touches[0].clientX
+        lastY=e.touches[0].clientY
+      }
+
+      if(e.touches.length===2){
+        const newDist=getDist(e.touches)
+        targetRadius -= (newDist-lastDist)*0.6
+        targetRadius=Math.max(5,targetRadius)
+        lastDist=newDist
+      }
+    }
+  })
+
+  function getDist(t){
+    const dx=t[0].clientX-t[1].clientX
+    const dy=t[0].clientY-t[1].clientY
+    return Math.sqrt(dx*dx+dy*dy)
+  }
 }
 
-function startGPS(){
+/* =====================================================
+   GPS
+===================================================== */
+
+function initGPS(){
+
   if(!navigator.geolocation){
-    statusEl.innerText="GPS não suportado";
-    return;
+    statusEl.innerText="GPS não suportado"
+    return
   }
 
   navigator.geolocation.watchPosition(pos=>{
-    const lat=pos.coords.latitude;
-    const lng=pos.coords.longitude;
+
+    const lat=pos.coords.latitude
+    const lng=pos.coords.longitude
 
     if(!origin){
-      origin={lat,lng};
-      statusEl.innerText="GPS conectado";
+      origin={lat,lng}
+      statusEl.innerText="GPS conectado"
     }
 
-    const scale=111139;
-    const x=(lng-origin.lng)*scale;
-    const z=(lat-origin.lat)*scale;
+    const scale=111139
+    const x=(lng-origin.lng)*scale
+    const z=(lat-origin.lat)*scale
 
-    updatePlayer(x,z);
-  },()=>statusEl.innerText="Erro GPS",{enableHighAccuracy:true});
+    updatePlayer(x,z)
+
+  },()=>statusEl.innerText="Erro GPS",{enableHighAccuracy:true})
 }
 
 function updatePlayer(x,z){
-  const newPos=new THREE.Vector3(x,4,z);
-  if(pathPoints.length>0 && pathPoints[pathPoints.length-1].distanceTo(newPos)<1) return;
 
-  player.position.copy(newPos);
-  pathPoints.push(newPos.clone());
-  updateTrail();
+  const newPos=new THREE.Vector3(x,4,z)
+
+  if(pathPoints.length>0 &&
+     pathPoints[pathPoints.length-1].distanceTo(newPos)<1) return
+
+  player.position.copy(newPos)
+  pathPoints.push(newPos.clone())
+  updateTrail()
+  updateMiniMap()
 }
 
 function updateTrail(){
-  if(trail) scene.remove(trail);
-  trail = new THREE.Line(
+  if(trail) scene.remove(trail)
+  trail=new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(pathPoints),
-    new THREE.LineBasicMaterial({ color:0xf97316 })
-  );
-  scene.add(trail);
+    new THREE.LineBasicMaterial({color:0xf97316})
+  )
+  scene.add(trail)
 }
 
-function animate(){
-  requestAnimationFrame(animate);
-
-  // 🎥 câmera suave atrás do player
-  const offset = new THREE.Vector3(
-    Math.sin(heading*Math.PI/180)*120,
-    80,
-    Math.cos(heading*Math.PI/180)*120
-  );
-
-  const desiredPos = player.position.clone().add(offset);
-  camera.position.lerp(desiredPos,0.05);
-  camera.lookAt(player.position);
-
-  renderer.render(scene,camera);
-  updateMiniMap();
-}
+/* =====================================================
+   COMPASS
+===================================================== */
 
 function initCompass(){
-  if (typeof DeviceOrientationEvent !== 'undefined') {
-    window.addEventListener("deviceorientation",(e)=>{
-      heading = e.alpha || 0;
+  if(typeof DeviceOrientationEvent!=="undefined"){
+    window.addEventListener("deviceorientation",e=>{
+      heading=e.alpha||0
       document.getElementById("compass").style.transform =
-        "rotate("+(-heading)+"deg)";
-    });
+        "rotate("+(-heading)+"deg)"
+    })
   }
 }
 
+/* =====================================================
+   MINIMAP
+===================================================== */
+
 function updateMiniMap(){
-  const canvas=document.getElementById("minimap");
-  const ctx=canvas.getContext("2d");
-  ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  ctx.fillStyle="green";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  const canvas=document.getElementById("minimap")
+  const ctx=canvas.getContext("2d")
+  canvas.width=120
+  canvas.height=120
 
-  ctx.strokeStyle="orange";
-  ctx.beginPath();
+  ctx.fillStyle="green"
+  ctx.fillRect(0,0,canvas.width,canvas.height)
+
+  ctx.strokeStyle="orange"
+  ctx.beginPath()
+
   pathPoints.forEach((p,i)=>{
-    const mx = canvas.width/2 + p.x*0.02;
-    const mz = canvas.height/2 + p.z*0.02;
-    if(i===0) ctx.moveTo(mx,mz);
-    else ctx.lineTo(mx,mz);
-  });
-  ctx.stroke();
+    const mx=canvas.width/2 + p.x*0.02
+    const mz=canvas.height/2 + p.z*0.02
+    if(i===0) ctx.moveTo(mx,mz)
+    else ctx.lineTo(mx,mz)
+  })
 
-  ctx.fillStyle="red";
-  ctx.beginPath();
-  ctx.arc(canvas.width/2,canvas.height/2,4,0,Math.PI*2);
-  ctx.fill();
+  ctx.stroke()
+
+  ctx.fillStyle="red"
+  ctx.beginPath()
+  ctx.arc(canvas.width/2,canvas.height/2,4,0,Math.PI*2)
+  ctx.fill()
 }
 
-document.getElementById("finishBtn").addEventListener("click", () => {
+/* =====================================================
+   LOOP
+===================================================== */
 
-  // força último render
-  renderer.render(scene, camera);
+function animate(){
+  requestAnimationFrame(animate)
+  updateCamera()
+  renderer.render(scene,camera)
+}
 
-  const image = renderer.domElement.toDataURL("image/png");
+/* =====================================================
+   UTILS
+===================================================== */
 
-  const link = document.createElement("a");
-  link.href = image;
-  link.download = "pathmesh-trilha.png";
-  link.click();
+function switchCameraMode(){
+  if(cameraMode===CameraModes.ORBIT) cameraMode=CameraModes.FOLLOW
+  else if(cameraMode===CameraModes.FOLLOW) cameraMode=CameraModes.FREE
+  else cameraMode=CameraModes.ORBIT
+  console.log("Modo:",cameraMode)
+}
 
-});
+document.getElementById("finishBtn").onclick=()=>{
+  renderer.render(scene,camera)
+  const image=renderer.domElement.toDataURL("image/png")
+  const link=document.createElement("a")
+  link.href=image
+  link.download="pathmesh-trilha.png"
+  link.click()
+}
+
 </script>
-
 </body>
 </html>
